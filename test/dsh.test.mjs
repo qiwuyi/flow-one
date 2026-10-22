@@ -60,6 +60,39 @@ test('DSH provider：插到 llm-pi-ai 的 providers 下，带托管标记，写�
   assert.ok(text.indexOf('opencode-go:') < text.indexOf(BLOCK_BEGIN), '既有 provider 原地不动')
 })
 
+test('DSH provider：上游声明的推理档位要写成 reasoningEfforts，否则选择器里选不了档', () => {
+  // 症状（2026-10-22 真机）：DSH 的模型选择器里 workbuddy-intl 的模型没有任何档位。
+  // 根因：DSH 的 pi-ai provider 只给声明了 reasoningEfforts 的模型显示档位菜单
+  // （llm-pi-ai/src/adapter.ts 的 reasoningInfo：没有 reasoning 元数据就返回空对象），
+  // 而这里原先只写了 id/name/contextWindow/maxTokens。
+  const { file } = scratch()
+  const sources = [
+    {
+      id: 'intl',
+      models: [
+        { id: 'intl/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000, maxOutputTokens: 128000, efforts: ['low', 'high', 'max'] },
+        // 没声明档位的模型不能凭空多出一个空字典：DSH 的 catalog 对空 reasoningEfforts 直接报错
+        { id: 'intl/plain', name: 'Plain', contextWindow: 200000, maxOutputTokens: 32000 },
+      ],
+    },
+  ]
+  applyDshProviders({ file, port: 8788, sources })
+  const text = fs.readFileSync(file, 'utf8')
+
+  assert.match(text, /^ {12}reasoningEfforts:$/m)
+  assert.match(text, /^ {14}low: low$/m, '档位名与线上取值同名，映射是恒等的')
+  assert.match(text, /^ {14}high: high$/m)
+  assert.match(text, /^ {14}max: max$/m)
+
+  // 没有档位的模型：它下面不该出现 reasoningEfforts 块
+  const plainAt = text.indexOf('- id: intl/plain')
+  assert.ok(plainAt > 0)
+  const plainTail = text.slice(plainAt)
+  const nextEntry = plainTail.indexOf('\n          - id:')
+  const plainBlock = nextEntry === -1 ? plainTail : plainTail.slice(0, nextEntry)
+  assert.doesNotMatch(plainBlock, /reasoningEfforts/, '空档位不能写空字典：DSH 会拒绝加载整个 provider')
+})
+
 test('DSH provider：重跑幂等（只有一段、不叠标记）', () => {
   const { file } = scratch()
   applyDshProviders({ file, port: 8788, sources: SOURCES })

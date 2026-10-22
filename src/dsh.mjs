@@ -81,6 +81,28 @@ export function newlineOf(text) {
   return String(text).includes('\r\n') ? '\r\n' : '\n'
 }
 
+/**
+ * DSH 侧可选推理档位的声明。
+ *
+ * 上游（WorkBuddy）在模型清单里给了 `reasoning.supportedEfforts`，本桥也照着它做
+ * 白名单透传（buddy.mjs），但**这份信息一直没往 DSH 传** —— 而 DSH 的 pi-ai provider
+ * 只给声明了 `reasoningEfforts` 的模型显示档位菜单（llm-pi-ai/src/adapter.ts 的
+ * reasoningInfo：模型没有 reasoning 元数据就返回空对象）。于是模型选择器里
+ * 一个档位都选不了，用户看到的是「这个模型不支持推理强度」，而实际上是没告诉它。
+ *
+ * 档位名与线上取值同名（low → `reasoning_effort: "low"`），所以映射是恒等的；
+ * `off` 不写：上游对 `reasoning_effort: "off"` 回 422，而 DSH 的 off 语义是
+ * 「不发这个字段」，两边对不上，宁可不给这一档。
+ */
+function effortLines(model, pad) {
+  const efforts = Array.isArray(model.efforts) ? model.efforts.filter(item => typeof item === 'string' && item !== '') : []
+  if (efforts.length === 0) return []
+  return [
+    `${pad(6)}reasoningEfforts:`,
+    ...efforts.map(effort => `${pad(8)}${effort}: ${effort}`),
+  ]
+}
+
 /** 生成托管段（含标记）；`indent` 是 sibling provider 的缩进。 */
 export function dshProviderBlock({ port, sources, indent = 6 }) {
   const pad = offset => ' '.repeat(indent + offset)
@@ -97,6 +119,7 @@ export function dshProviderBlock({ port, sources, indent = 6 }) {
       lines.push(`${pad(6)}name: "${String(model.name ?? model.id).replace(/"/g, "'")}"`)
       if (Number.isFinite(model.contextWindow)) lines.push(`${pad(6)}contextWindow: ${model.contextWindow}`)
       if (Number.isFinite(model.maxOutputTokens)) lines.push(`${pad(6)}maxTokens: ${model.maxOutputTokens}`)
+      lines.push(...effortLines(model, pad))
     }
   }
   lines.push(pad(0) + BLOCK_END)
